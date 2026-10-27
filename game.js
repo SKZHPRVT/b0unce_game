@@ -54,6 +54,7 @@ const ball = {
   wallJumpUsed: false,
   wallNx: 0,
   wallNy: 0,
+  wallTouchTime: -999,
   lastTouch: 0,
 };
 
@@ -195,6 +196,7 @@ function resolveCollisions() {
   let touchedFloor = false;
   let touchedWall = false;
   let wallNx = 0, wallNy = 0;
+  const now = performance.now() / 1000;
 
   for (let iter = 0; iter < 3; iter++) {
     let anyHit = false;
@@ -233,8 +235,11 @@ function resolveCollisions() {
         touchedWall = true;
         wallNx = nx;
         wallNy = ny;
+        ball.wallTouchTime = now;
+        ball.wallNx = nx;
+        ball.wallNy = ny;
       }
-      ball.lastTouch = performance.now() / 1000;
+      ball.lastTouch = now;
     }
     if (!anyHit) break;
   }
@@ -249,25 +254,24 @@ function resolveCollisions() {
     ball.onSurface = true;
     ball.onWall = false;
     ball.wallJumpUsed = false;
-    ball.lastTouch = performance.now() / 1000;
+    ball.lastTouch = now;
+    ball.wallTouchTime = -999;
     stick.dirX = 0;
     stick.dirY = 0;
     return;
   }
 
-  const now = performance.now() / 1000;
   ball.onSurface = touchedFloor || touchedWall || (now - ball.lastTouch) < CONFIG.COYOTE_TIME;
 
+  // пол сбрасывает wallJumpUsed
   if (touchedFloor) {
     ball.wallJumpUsed = false;
-    ball.onWall = false;
-  } else if (touchedWall) {
-    ball.onWall = true;
-    ball.wallNx = wallNx;
-    ball.wallNy = wallNy;
-  } else {
-    ball.onWall = false;
   }
+
+  // onWall держится WALL_GRACE после последнего касания стены
+  const wallGrace = 0.20;
+  const recentlyOnWall = (now - (ball.wallTouchTime || -999)) < wallGrace;
+  ball.onWall = (touchedWall || recentlyOnWall) && !touchedFloor;
 }
 
 function update(dt) {
@@ -324,19 +328,20 @@ function update(dt) {
   if (input.jumpBuffer > 0) {
     input.jumpBuffer -= dt;
 
-    // прыжок от стены: в сторону ОТ стены (по нормали), а не по стику
-    const canWallJump = ball.onWall && !ball.wallJumpUsed;
-    // прыжок от пола: по стику (или вверх, если стик не двигали)
-    const canFloorJump = ball.onSurface && !ball.onWall;
+    const now = performance.now() / 1000;
+    const onWallRecent = ball.onWall && (now - (ball.wallTouchTime || -999)) < 0.20;
+    const canWallJump = onWallRecent && !ball.wallJumpUsed;
+    const canFloorJump = ball.onSurface && !onWallRecent;
 
     if (canWallJump) {
-      // отталкиваемся ОТ стены: нормаль стены уже смотрит от стены к шару
+      // отталкиваемся ОТ стены по нормали
       ball.vx = ball.wallNx * CONFIG.JUMP_POWER;
       ball.vy = ball.wallNy * CONFIG.JUMP_POWER;
       ball.onSurface = false;
       ball.onWall = false;
       ball.wallJumpUsed = true;
       ball.lastTouch = -999;
+      ball.wallTouchTime = -999;
       input.jumpBuffer = 0;
     } else if (canFloorJump) {
       const dirMag = Math.hypot(stick.dirX, stick.dirY);
