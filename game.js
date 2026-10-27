@@ -421,6 +421,11 @@ function render() {
   ctx.stroke();
 
   drawStick();
+
+  const dbg = document.getElementById('debug');
+  if (dbg) {
+    dbg.textContent = `x=${ball.x.toFixed(0)} y=${ball.y.toFixed(0)} vx=${ball.vx.toFixed(0)} vy=${ball.vy.toFixed(0)} onS=${ball.onSurface?1:0} onW=${ball.onWall?1:0}`;
+  }
 }
 
 // ===== ЦИКЛ =====
