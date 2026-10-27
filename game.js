@@ -18,6 +18,9 @@ const CONFIG = {
   STICK_KNOB: 28,          // радиус ручки
   STICK_MARGIN: 24,        // отступ от края
   STICK_DEADZONE: 0.15,
+  STICK_ACCEL: 2200,
+  MAX_STICK_SPEED: 520,
+  FRICTION_Y: 0.998,
   JUMP_BUFFER: 0.15,
   AIR_CONTROL: 900,    // мёртвая зона (0..1)
 };
@@ -226,14 +229,23 @@ function update(dt) {
   // гравитация
   ball.vy += CONFIG.GRAVITY * dt;
 
-  // подруливание в воздухе (стик влияет на траекторию)
-  if (!ball.onSurface && (stick.nx !== 0 || stick.ny !== 0)) {
-    ball.vx += stick.nx * CONFIG.AIR_CONTROL * dt;
-    ball.vy += stick.ny * CONFIG.AIR_CONTROL * dt;
+  // стик двигает шар ВСЕГДА (и на поверхности, и в полёте)
+  if (stick.nx !== 0 || stick.ny !== 0) {
+    ball.vx += stick.nx * CONFIG.STICK_ACCEL * dt;
+    ball.vy += stick.ny * CONFIG.STICK_ACCEL * dt;
   }
 
-  // трение
+  // трение (горизонталь сильнее, вертикаль слабее — чтобы не «висел»)
   ball.vx *= Math.pow(CONFIG.FRICTION, dt * 60);
+  ball.vy *= Math.pow(CONFIG.FRICTION_Y, dt * 60);
+
+  // ограничение максимальной скорости от стика
+  const maxSpeed = CONFIG.MAX_STICK_SPEED;
+  const sp = Math.hypot(ball.vx, ball.vy);
+  if (sp > maxSpeed) {
+    ball.vx = (ball.vx / sp) * maxSpeed;
+    ball.vy = (ball.vy / sp) * maxSpeed;
+  }
 
   // движение
   ball.x += ball.vx * dt;
@@ -241,14 +253,15 @@ function update(dt) {
 
   resolveCollisions();
 
-  // "лежит" на поверхности — гасим мелочь
+  // "лежит" на поверхности — гасим мелочь, но только если стик не двигает
   const speed = Math.hypot(ball.vx, ball.vy);
-  if (ball.onSurface && speed < CONFIG.STOP_SPEED) {
+  const stickIdle = (stick.nx === 0 && stick.ny === 0);
+  if (ball.onSurface && stickIdle && speed < CONFIG.STOP_SPEED) {
     ball.vx = 0;
     ball.vy = 0;
   }
 
-  // буфер прыжка: если нажали, но прыжок недоступен — запоминаем на JUMP_BUFFER
+  // буфер прыжка
   if (input.jumpQueued) {
     input.jumpBuffer = CONFIG.JUMP_BUFFER;
     input.jumpQueued = false;
@@ -256,8 +269,12 @@ function update(dt) {
   if (input.jumpBuffer > 0) {
     input.jumpBuffer -= dt;
     if (ball.onSurface) {
-      ball.vx = Math.cos(input.angle) * CONFIG.JUMP_POWER;
-      ball.vy = Math.sin(input.angle) * CONFIG.JUMP_POWER;
+      // прыжок — импульс в сторону стика (если стик не двигали — вверх)
+      const ang = (stick.nx !== 0 || stick.ny !== 0)
+        ? Math.atan2(stick.ny, stick.nx)
+        : -Math.PI / 2;
+      ball.vx = Math.cos(ang) * CONFIG.JUMP_POWER;
+      ball.vy = Math.sin(ang) * CONFIG.JUMP_POWER;
       ball.onSurface = false;
       ball.lastTouch = -999;
       input.jumpBuffer = 0;
@@ -346,7 +363,7 @@ function render() {
 
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, CONFIG.BALL_RADIUS, 0, Math.PI * 2);
-  ctx.fillStyle = ball.onSurface ? '#7de3ff' : '#4aa9c4';
+  ctx.fillStyle = '#7de3ff';
   ctx.fill();
   ctx.strokeStyle = '#ffffff22';
   ctx.lineWidth = 1;
