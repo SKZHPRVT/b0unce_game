@@ -245,11 +245,13 @@ function update(dt) {
   ball.vy += CONFIG.GRAVITY * dt;
 
   // РЕЖИМ B: шар катится по запомненному направлению стика
+  // НО: вертикальное ускорение от стика НЕ даём — иначе шар летает.
   const dirMag = Math.hypot(stick.dirX, stick.dirY);
-  if (dirMag > 0) {
+  if (dirMag > 0 && ball.onSurface && !ball.onWall) {
+    // на полу — катим по горизонтали
     ball.vx += stick.dirX * CONFIG.STICK_ACCEL * dt;
-    ball.vy += stick.dirY * CONFIG.STICK_ACCEL * dt;
   }
+  // на стене и в воздухе стик НЕ двигает (только прыжок)
 
   // трение
   ball.vx *= Math.pow(CONFIG.FRICTION, dt * 60);
