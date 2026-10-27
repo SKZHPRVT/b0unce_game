@@ -7,22 +7,20 @@ const CONFIG = {
   GRAVITY: 1400,
   JUMP_POWER: 750,
   RESTITUTION: 0.7,
-  FRICTION: 0.999,
+  FRICTION: 0.998,       // трение по горизонтали (медленное)
+  FRICTION_Y: 0.999,     // трение по вертикали
   STOP_SPEED: 30,
   COYOTE_TIME: 0.22,
   SHOW_ARROW: true,
   BALL_RADIUS: 14,
   SURFACE: 12,
-  // виртуальный стик
-  STICK_RADIUS: 64,        // внешний радиус
-  STICK_KNOB: 28,          // радиус ручки
-  STICK_MARGIN: 24,        // отступ от края
+  STICK_RADIUS: 64,
+  STICK_KNOB: 28,
+  STICK_MARGIN: 24,
   STICK_DEADZONE: 0.15,
   STICK_ACCEL: 2200,
-  MAX_STICK_SPEED: 520,
-  FRICTION_Y: 0.998,
+  MAX_STICK_SPEED: 420,
   JUMP_BUFFER: 0.15,
-  AIR_CONTROL: 900,    // мёртвая зона (0..1)
 };
 
 const canvas = document.getElementById('game');
@@ -51,6 +49,8 @@ const ball = {
   vx: 0,
   vy: 0,
   onSurface: false,
+  onWall: false,
+  wallJumpUsed: false,
   lastTouch: 0,
 };
 
@@ -62,27 +62,28 @@ const stick = {
   knobY: 0,
   active: false,
   pointerId: null,
-  // нормализованный вектор (-1..1)
   nx: 0,
   ny: 0,
+  // запомненное направление (B-режим)
+  dirX: 0,
+  dirY: 0,
 };
 stick.knobX = stick.baseX;
 stick.knobY = stick.baseY;
 
 const input = {
-  angle: -Math.PI / 2, // угол по умолчанию — вверх
+  angle: -Math.PI / 2,
   jumpQueued: false,
   jumpBuffer: 0,
 };
 
-// ===== ВВОД: стик =====
+// ===== ВВОД: СТИК =====
 function updateStickFromPointer(px, py) {
   const dx = px - stick.baseX;
   const dy = py - stick.baseY;
   const dist = Math.hypot(dx, dy);
   const max = CONFIG.STICK_RADIUS;
 
-  // ограничиваем ручку кругом
   let kx, ky;
   if (dist > max) {
     kx = stick.baseX + (dx / dist) * max;
@@ -94,7 +95,6 @@ function updateStickFromPointer(px, py) {
   stick.knobX = kx;
   stick.knobY = ky;
 
-  // нормализованный вектор
   const ndx = (kx - stick.baseX) / max;
   const ndy = (ky - stick.baseY) / max;
   const mag = Math.hypot(ndx, ndy);
@@ -102,23 +102,26 @@ function updateStickFromPointer(px, py) {
   if (mag < CONFIG.STICK_DEADZONE) {
     stick.nx = 0;
     stick.ny = 0;
+    stick.dirX = 0;
+    stick.dirY = 0;
   } else {
     stick.nx = ndx;
     stick.ny = ndy;
+    // ЗАПОМИНАЕМ направление — режим B
+    stick.dirX = ndx;
+    stick.dirY = ndy;
     input.angle = Math.atan2(ndy, ndx);
   }
 }
 
-function resetStick() {
+function resetStickVisual() {
   stick.knobX = stick.baseX;
   stick.knobY = stick.baseY;
-  stick.nx = 0;
-  stick.ny = 0;
   stick.active = false;
   stick.pointerId = null;
+  // ВАЖНО: dirX/dirY НЕ сбрасываем — шар продолжает катиться
 }
 
-// координаты указателя → координаты canvas (с учётом масштаба CSS)
 function pointerToCanvas(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
   return {
@@ -128,7 +131,6 @@ function pointerToCanvas(clientX, clientY) {
 }
 
 function isInStickZone(x, y) {
-  // зона стика — вся нижняя левая четверть экрана
   return x < W * 0.5 && y > H * 0.5;
 }
 
@@ -136,14 +138,12 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   const p = pointerToCanvas(e.clientX, e.clientY);
   if (isInStickZone(p.x, p.y)) {
-    // активируем стик — база в точке касания
     stick.baseX = p.x;
     stick.baseY = p.y;
     stick.active = true;
     stick.pointerId = e.pointerId;
     updateStickFromPointer(p.x, p.y);
   } else {
-    // вне зоны стика — прыжок
     input.jumpQueued = true;
   }
 });
@@ -157,11 +157,14 @@ canvas.addEventListener('pointermove', (e) => {
 
 function endPointer(e) {
   if (stick.active && e.pointerId === stick.pointerId) {
-    // если стик почти не двигали — это был тап, считаем прыжком
     const moved = Math.hypot(stick.nx, stick.ny) > CONFIG.STICK_DEADZONE;
-    if (!moved) input.jumpQueued = true;
-    resetStick();
-    // вернуть базу на место (по умолчанию)
+    if (!moved) {
+      // тап по стику без движения = сброс направления + прыжок
+      stick.dirX = 0;
+      stick.dirY = 0;
+      input.jumpQueued = true;
+    }
+    resetStickVisual();
     stick.baseX = CONFIG.STICK_MARGIN + CONFIG.STICK_RADIUS;
     stick.baseY = H - CONFIG.STICK_MARGIN - CONFIG.STICK_RADIUS;
     stick.knobX = stick.baseX;
@@ -171,7 +174,6 @@ function endPointer(e) {
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 
-// клавиатура — только пробел для прыжка (на десктопе удобно тестить)
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') { input.jumpQueued = true; e.preventDefault(); }
 });
@@ -187,7 +189,8 @@ function circleRectCollide(cx, cy, r, rect) {
 }
 
 function resolveCollisions() {
-  let touchedThisFrame = false;
+  let touchedFloor = false;
+  let touchedWall = false;
   for (const rect of LEVEL.walls) {
     const c = circleRectCollide(ball.x, ball.y, CONFIG.BALL_RADIUS, rect);
     if (!c.hit) continue;
@@ -215,12 +218,24 @@ function resolveCollisions() {
       ball.vx -= (1 + CONFIG.RESTITUTION) * vn * nx;
       ball.vy -= (1 + CONFIG.RESTITUTION) * vn * ny;
     }
-    touchedThisFrame = true;
+
+    if (Math.abs(ny) > 0.7) touchedFloor = true;
+    else touchedWall = true;
+
     ball.lastTouch = performance.now() / 1000;
   }
-  // "залипание": onSurface держится COYOTE_TIME после последнего касания
+
   const now = performance.now() / 1000;
-  ball.onSurface = touchedThisFrame || (now - ball.lastTouch) < CONFIG.COYOTE_TIME;
+  ball.onSurface = touchedFloor || touchedWall || (now - ball.lastTouch) < CONFIG.COYOTE_TIME;
+
+  if (touchedFloor) {
+    ball.wallJumpUsed = false;
+    ball.onWall = false;
+  } else if (touchedWall) {
+    ball.onWall = true;
+  } else {
+    ball.onWall = false;
+  }
 }
 
 function update(dt) {
@@ -229,22 +244,20 @@ function update(dt) {
   // гравитация
   ball.vy += CONFIG.GRAVITY * dt;
 
-  // стик двигает шар ВСЕГДА (и на поверхности, и в полёте)
-  if (stick.nx !== 0 || stick.ny !== 0) {
-    ball.vx += stick.nx * CONFIG.STICK_ACCEL * dt;
-    ball.vy += stick.ny * CONFIG.STICK_ACCEL * dt;
+  // РЕЖИМ B: шар катится по запомненному направлению стика
+  const dirMag = Math.hypot(stick.dirX, stick.dirY);
+  if (dirMag > 0) {
+    ball.vx += stick.dirX * CONFIG.STICK_ACCEL * dt;
+    ball.vy += stick.dirY * CONFIG.STICK_ACCEL * dt;
   }
 
-  // трение (горизонталь сильнее, вертикаль слабее — чтобы не «висел»)
+  // трение
   ball.vx *= Math.pow(CONFIG.FRICTION, dt * 60);
   ball.vy *= Math.pow(CONFIG.FRICTION_Y, dt * 60);
 
-  // ограничение максимальной скорости от стика
-  const maxSpeed = CONFIG.MAX_STICK_SPEED;
-  const sp = Math.hypot(ball.vx, ball.vy);
-  if (sp > maxSpeed) {
-    ball.vx = (ball.vx / sp) * maxSpeed;
-    ball.vy = (ball.vy / sp) * maxSpeed;
+  // ограничение скорости по горизонтали
+  if (Math.abs(ball.vx) > CONFIG.MAX_STICK_SPEED) {
+    ball.vx = Math.sign(ball.vx) * CONFIG.MAX_STICK_SPEED;
   }
 
   // движение
@@ -253,10 +266,9 @@ function update(dt) {
 
   resolveCollisions();
 
-  // "лежит" на поверхности — гасим мелочь, но только если стик не двигает
+  // гасим мелочь только если направление не задано
   const speed = Math.hypot(ball.vx, ball.vy);
-  const stickIdle = (stick.nx === 0 && stick.ny === 0);
-  if (ball.onSurface && stickIdle && speed < CONFIG.STOP_SPEED) {
+  if (ball.onSurface && dirMag === 0 && speed < CONFIG.STOP_SPEED) {
     ball.vx = 0;
     ball.vy = 0;
   }
@@ -268,15 +280,18 @@ function update(dt) {
   }
   if (input.jumpBuffer > 0) {
     input.jumpBuffer -= dt;
-    if (ball.onSurface) {
-      // прыжок — импульс в сторону стика (если стик не двигали — вверх)
-      const ang = (stick.nx !== 0 || stick.ny !== 0)
-        ? Math.atan2(stick.ny, stick.nx)
-        : -Math.PI / 2;
+
+    const canFloorJump = ball.onSurface && !ball.onWall;
+    const canWallJump = ball.onWall && !ball.wallJumpUsed;
+
+    if (canFloorJump || canWallJump) {
+      const ang = (dirMag > 0) ? Math.atan2(stick.dirY, stick.dirX) : -Math.PI / 2;
       ball.vx = Math.cos(ang) * CONFIG.JUMP_POWER;
       ball.vy = Math.sin(ang) * CONFIG.JUMP_POWER;
       ball.onSurface = false;
+      ball.onWall = false;
       ball.lastTouch = -999;
+      if (canWallJump) ball.wallJumpUsed = true;
       input.jumpBuffer = 0;
     }
   }
@@ -296,7 +311,11 @@ function win() {
   ball.x = W / 2;
   ball.y = H - CONFIG.SURFACE - CONFIG.BALL_RADIUS - 2;
   ball.onSurface = true;
+  ball.onWall = false;
+  ball.wallJumpUsed = false;
   ball.lastTouch = performance.now() / 1000;
+  stick.dirX = 0;
+  stick.dirY = 0;
 }
 
 // ===== РЕНДЕР =====
@@ -326,7 +345,6 @@ function drawArrow() {
 }
 
 function drawStick() {
-  // внешний круг
   ctx.beginPath();
   ctx.arc(stick.baseX, stick.baseY, CONFIG.STICK_RADIUS, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
@@ -335,7 +353,6 @@ function drawStick() {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // ручка
   ctx.beginPath();
   ctx.arc(stick.knobX, stick.knobY, CONFIG.STICK_KNOB, 0, Math.PI * 2);
   ctx.fillStyle = stick.active ? 'rgba(120, 220, 255, 0.85)' : 'rgba(255, 255, 255, 0.35)';
@@ -361,11 +378,12 @@ function render() {
 
   drawArrow();
 
+  // шар — ВСЕГДА светлый
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, CONFIG.BALL_RADIUS, 0, Math.PI * 2);
   ctx.fillStyle = '#7de3ff';
   ctx.fill();
-  ctx.strokeStyle = '#ffffff22';
+  ctx.strokeStyle = '#ffffff44';
   ctx.lineWidth = 1;
   ctx.stroke();
 
