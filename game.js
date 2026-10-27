@@ -191,43 +191,64 @@ function circleRectCollide(cx, cy, r, rect) {
 function resolveCollisions() {
   let touchedFloor = false;
   let touchedWall = false;
-  for (const rect of LEVEL.walls) {
-    const c = circleRectCollide(ball.x, ball.y, CONFIG.BALL_RADIUS, rect);
-    if (!c.hit) continue;
-    let nx, ny;
-    if (c.dist === 0) {
-      const left = ball.x - rect.x;
-      const right = rect.x + rect.w - ball.x;
-      const top = ball.y - rect.y;
-      const bottom = rect.y + rect.h - ball.y;
-      const m = Math.min(left, right, top, bottom);
-      if (m === left)  { nx = -1; ny = 0; }
-      else if (m === right) { nx = 1; ny = 0; }
-      else if (m === top) { nx = 0; ny = -1; }
-      else { nx = 0; ny = 1; }
-    } else {
-      nx = c.dx / c.dist;
-      ny = c.dy / c.dist;
+
+  for (let iter = 0; iter < 3; iter++) {
+    let anyHit = false;
+    for (const rect of LEVEL.walls) {
+      const c = circleRectCollide(ball.x, ball.y, CONFIG.BALL_RADIUS, rect);
+      if (!c.hit) continue;
+      anyHit = true;
+      let nx, ny;
+      if (c.dist === 0) {
+        const left = ball.x - rect.x;
+        const right = rect.x + rect.w - ball.x;
+        const top = ball.y - rect.y;
+        const bottom = rect.y + rect.h - ball.y;
+        const m = Math.min(left, right, top, bottom);
+        if (m === left)  { nx = -1; ny = 0; }
+        else if (m === right) { nx = 1; ny = 0; }
+        else if (m === top) { nx = 0; ny = -1; }
+        else { nx = 0; ny = 1; }
+      } else {
+        nx = c.dx / c.dist;
+        ny = c.dy / c.dist;
+      }
+      const overlap = CONFIG.BALL_RADIUS - c.dist;
+      if (overlap > 0 && isFinite(overlap)) {
+        ball.x += nx * overlap;
+        ball.y += ny * overlap;
+      }
+      const vn = ball.vx * nx + ball.vy * ny;
+      if (vn < 0) {
+        ball.vx -= (1 + CONFIG.RESTITUTION) * vn * nx;
+        ball.vy -= (1 + CONFIG.RESTITUTION) * vn * ny;
+      }
+      if (Math.abs(ny) > 0.7) touchedFloor = true;
+      else touchedWall = true;
+      ball.lastTouch = performance.now() / 1000;
     }
-    const overlap = CONFIG.BALL_RADIUS - c.dist;
-    ball.x += nx * overlap;
-    ball.y += ny * overlap;
+    if (!anyHit) break;
+  }
 
-    const vn = ball.vx * nx + ball.vy * ny;
-    if (vn < 0) {
-      ball.vx -= (1 + CONFIG.RESTITUTION) * vn * nx;
-      ball.vy -= (1 + CONFIG.RESTITUTION) * vn * ny;
-    }
-
-    if (Math.abs(ny) > 0.7) touchedFloor = true;
-    else touchedWall = true;
-
+  if (!isFinite(ball.x) || !isFinite(ball.y) ||
+      ball.x < -200 || ball.x > W + 200 ||
+      ball.y < -200 || ball.y > H + 200) {
+    console.warn('BALL RESCUED', { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
+    ball.x = W / 2;
+    ball.y = H - CONFIG.SURFACE - CONFIG.BALL_RADIUS - 2;
+    ball.vx = 0;
+    ball.vy = 0;
+    ball.onSurface = true;
+    ball.onWall = false;
+    ball.wallJumpUsed = false;
     ball.lastTouch = performance.now() / 1000;
+    stick.dirX = 0;
+    stick.dirY = 0;
+    return;
   }
 
   const now = performance.now() / 1000;
   ball.onSurface = touchedFloor || touchedWall || (now - ball.lastTouch) < CONFIG.COYOTE_TIME;
-
   if (touchedFloor) {
     ball.wallJumpUsed = false;
     ball.onWall = false;
@@ -404,6 +425,9 @@ function loop(now) {
   last = now;
   update(dt);
   render();
+  if (!isFinite(ball.x) || !isFinite(ball.y) || ball.x < -100 || ball.x > W + 100 || ball.y < -100 || ball.y > H + 100) {
+    console.warn('BALL OUT', { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
