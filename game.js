@@ -18,8 +18,8 @@ const CONFIG = {
   STICK_KNOB: 28,
   STICK_MARGIN: 24,
   STICK_DEADZONE: 0.15,
-  STICK_ACCEL: 2200,
-  MAX_STICK_SPEED: 420,
+  STICK_ACCEL: 1200,
+  MAX_STICK_SPEED: 260,
   JUMP_BUFFER: 0.15,
   AIR_CONTROL: 400,
 };
@@ -52,6 +52,8 @@ const ball = {
   onSurface: false,
   onWall: false,
   wallJumpUsed: false,
+  wallNx: 0,
+  wallNy: 0,
   lastTouch: 0,
 };
 
@@ -192,6 +194,7 @@ function circleRectCollide(cx, cy, r, rect) {
 function resolveCollisions() {
   let touchedFloor = false;
   let touchedWall = false;
+  let wallNx = 0, wallNy = 0;
 
   for (let iter = 0; iter < 3; iter++) {
     let anyHit = false;
@@ -224,8 +227,13 @@ function resolveCollisions() {
         ball.vx -= (1 + CONFIG.RESTITUTION) * vn * nx;
         ball.vy -= (1 + CONFIG.RESTITUTION) * vn * ny;
       }
-      if (Math.abs(ny) > 0.7) touchedFloor = true;
-      else touchedWall = true;
+      if (Math.abs(ny) > 0.7) {
+        touchedFloor = true;
+      } else {
+        touchedWall = true;
+        wallNx = nx;
+        wallNy = ny;
+      }
       ball.lastTouch = performance.now() / 1000;
     }
     if (!anyHit) break;
@@ -234,7 +242,6 @@ function resolveCollisions() {
   if (!isFinite(ball.x) || !isFinite(ball.y) ||
       ball.x < -200 || ball.x > W + 200 ||
       ball.y < -200 || ball.y > H + 200) {
-    console.warn('BALL RESCUED', { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy });
     ball.x = W / 2;
     ball.y = H - CONFIG.SURFACE - CONFIG.BALL_RADIUS - 2;
     ball.vx = 0;
@@ -250,11 +257,14 @@ function resolveCollisions() {
 
   const now = performance.now() / 1000;
   ball.onSurface = touchedFloor || touchedWall || (now - ball.lastTouch) < CONFIG.COYOTE_TIME;
+
   if (touchedFloor) {
     ball.wallJumpUsed = false;
     ball.onWall = false;
   } else if (touchedWall) {
     ball.onWall = true;
+    ball.wallNx = wallNx;
+    ball.wallNy = wallNy;
   } else {
     ball.onWall = false;
   }
@@ -314,20 +324,32 @@ function update(dt) {
   if (input.jumpBuffer > 0) {
     input.jumpBuffer -= dt;
 
-    const canFloorJump = ball.onSurface && !ball.onWall && (now - ball.lastTouch) < 0.06;
-    const canWallJump = ball.onWall && !ball.wallJumpUsed && (now - ball.lastTouch) < 0.06;
+    // прыжок от стены: в сторону ОТ стены (по нормали), а не по стику
+    const canWallJump = ball.onWall && !ball.wallJumpUsed;
+    // прыжок от пола: по стику (или вверх, если стик не двигали)
+    const canFloorJump = ball.onSurface && !ball.onWall;
 
-    if (canFloorJump || canWallJump) {
+    if (canWallJump) {
+      // отталкиваемся ОТ стены: нормаль стены уже смотрит от стены к шару
+      ball.vx = ball.wallNx * CONFIG.JUMP_POWER;
+      ball.vy = ball.wallNy * CONFIG.JUMP_POWER;
+      ball.onSurface = false;
+      ball.onWall = false;
+      ball.wallJumpUsed = true;
+      ball.lastTouch = -999;
+      input.jumpBuffer = 0;
+    } else if (canFloorJump) {
+      const dirMag = Math.hypot(stick.dirX, stick.dirY);
       const ang = (dirMag > 0) ? Math.atan2(stick.dirY, stick.dirX) : -Math.PI / 2;
       ball.vx = Math.cos(ang) * CONFIG.JUMP_POWER;
       ball.vy = Math.sin(ang) * CONFIG.JUMP_POWER;
       ball.onSurface = false;
       ball.onWall = false;
       ball.lastTouch = -999;
-      if (canWallJump) ball.wallJumpUsed = true;
       input.jumpBuffer = 0;
     }
   }
+
 
   // мишень
   const t = LEVEL.target;
