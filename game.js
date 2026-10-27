@@ -10,7 +10,7 @@ const CONFIG = {
   FRICTION: 0.998,       // трение по горизонтали (медленное)
   FRICTION_Y: 0.999,     // трение по вертикали
   STOP_SPEED: 30,
-  COYOTE_TIME: 0.22,
+  COYOTE_TIME: 0.05,
   SHOW_ARROW: true,
   BALL_RADIUS: 14,
   SURFACE: 12,
@@ -245,14 +245,19 @@ function update(dt) {
   ball.vy += CONFIG.GRAVITY * dt;
 
   // РЕЖИМ B: шар катится по запомненному направлению стика
-  // НО: вертикальное ускорение от стика НЕ даём — иначе шар летает.
+  // На полу — только горизонталь. В воздухе — только горизонталь.
+  // На стене — ничего (только прыжок). Вертикаль от стика НЕ даём.
   const dirMag = Math.hypot(stick.dirX, stick.dirY);
-  if (dirMag > 0 && ball.onSurface && !ball.onWall) {
-    // на полу — катим по горизонтали
-    ball.vx += stick.dirX * CONFIG.STICK_ACCEL * dt;
+  if (dirMag > 0) {
+    if (ball.onSurface && !ball.onWall) {
+      // на полу: катим по горизонтали
+      ball.vx += stick.dirX * CONFIG.STICK_ACCEL * dt;
+    } else if (!ball.onSurface) {
+      // в воздухе: слабое подруливание по горизонтали
+      ball.vx += stick.dirX * CONFIG.AIR_CONTROL * dt;
+    }
+    // на стене — ничего
   }
-  // на стене и в воздухе стик НЕ двигает (только прыжок)
-
   // трение
   ball.vx *= Math.pow(CONFIG.FRICTION, dt * 60);
   ball.vy *= Math.pow(CONFIG.FRICTION_Y, dt * 60);
@@ -283,8 +288,8 @@ function update(dt) {
   if (input.jumpBuffer > 0) {
     input.jumpBuffer -= dt;
 
-    const canFloorJump = ball.onSurface && !ball.onWall;
-    const canWallJump = ball.onWall && !ball.wallJumpUsed;
+    const canFloorJump = ball.onSurface && !ball.onWall && (now - ball.lastTouch) < 0.06;
+    const canWallJump = ball.onWall && !ball.wallJumpUsed && (now - ball.lastTouch) < 0.06;
 
     if (canFloorJump || canWallJump) {
       const ang = (dirMag > 0) ? Math.atan2(stick.dirY, stick.dirX) : -Math.PI / 2;
