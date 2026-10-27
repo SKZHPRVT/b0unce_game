@@ -21,6 +21,7 @@ const CONFIG = {
   STICK_ACCEL: 2200,
   MAX_STICK_SPEED: 420,
   JUMP_BUFFER: 0.15,
+  AIR_CONTROL: 400,
 };
 
 const canvas = document.getElementById('game');
@@ -287,6 +288,10 @@ function update(dt) {
   if (Math.abs(ball.vx) > CONFIG.MAX_STICK_SPEED) {
     ball.vx = Math.sign(ball.vx) * CONFIG.MAX_STICK_SPEED;
   }
+
+  // защита от NaN/Infinity
+  if (!isFinite(ball.vx)) ball.vx = 0;
+  if (!isFinite(ball.vy)) ball.vy = 0;
 
   // движение
   ball.x += ball.vx * dt;
