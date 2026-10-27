@@ -9,7 +9,7 @@ const CONFIG = {
   RESTITUTION: 0.7,
   FRICTION: 0.999,
   STOP_SPEED: 30,
-  COYOTE_TIME: 0.18,
+  COYOTE_TIME: 0.22,
   SHOW_ARROW: true,
   BALL_RADIUS: 14,
   SURFACE: 12,
@@ -17,7 +17,9 @@ const CONFIG = {
   STICK_RADIUS: 64,        // внешний радиус
   STICK_KNOB: 28,          // радиус ручки
   STICK_MARGIN: 24,        // отступ от края
-  STICK_DEADZONE: 0.15,    // мёртвая зона (0..1)
+  STICK_DEADZONE: 0.15,
+  JUMP_BUFFER: 0.15,
+  AIR_CONTROL: 900,    // мёртвая зона (0..1)
 };
 
 const canvas = document.getElementById('game');
@@ -67,6 +69,7 @@ stick.knobY = stick.baseY;
 const input = {
   angle: -Math.PI / 2, // угол по умолчанию — вверх
   jumpQueued: false,
+  jumpBuffer: 0,
 };
 
 // ===== ВВОД: стик =====
@@ -220,30 +223,48 @@ function resolveCollisions() {
 function update(dt) {
   const now = performance.now() / 1000;
 
+  // гравитация
   ball.vy += CONFIG.GRAVITY * dt;
+
+  // подруливание в воздухе (стик влияет на траекторию)
+  if (!ball.onSurface && (stick.nx !== 0 || stick.ny !== 0)) {
+    ball.vx += stick.nx * CONFIG.AIR_CONTROL * dt;
+    ball.vy += stick.ny * CONFIG.AIR_CONTROL * dt;
+  }
+
+  // трение
   ball.vx *= Math.pow(CONFIG.FRICTION, dt * 60);
+
+  // движение
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
   resolveCollisions();
 
+  // "лежит" на поверхности — гасим мелочь
   const speed = Math.hypot(ball.vx, ball.vy);
   if (ball.onSurface && speed < CONFIG.STOP_SPEED) {
     ball.vx = 0;
     ball.vy = 0;
   }
 
-  const canJump = ball.onSurface;
+  // буфер прыжка: если нажали, но прыжок недоступен — запоминаем на JUMP_BUFFER
   if (input.jumpQueued) {
-    if (canJump) {
+    input.jumpBuffer = CONFIG.JUMP_BUFFER;
+    input.jumpQueued = false;
+  }
+  if (input.jumpBuffer > 0) {
+    input.jumpBuffer -= dt;
+    if (ball.onSurface) {
       ball.vx = Math.cos(input.angle) * CONFIG.JUMP_POWER;
       ball.vy = Math.sin(input.angle) * CONFIG.JUMP_POWER;
       ball.onSurface = false;
       ball.lastTouch = -999;
+      input.jumpBuffer = 0;
     }
-    input.jumpQueued = false;
   }
 
+  // мишень
   const t = LEVEL.target;
   if (Math.hypot(ball.x - t.x, ball.y - t.y) < t.r + CONFIG.BALL_RADIUS) {
     win();
